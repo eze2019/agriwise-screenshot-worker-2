@@ -10,11 +10,12 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// 🔍 Health check (obrigatório)
+// 🔍 Health check (obrigatório para Railway)
 app.get("/health", (req, res) => {
   res.send("ok");
 });
 
+// 📸 Endpoint para gerar screenshot
 app.post("/screenshot", async (req, res) => {
   try {
     const { shareCode } = req.body;
@@ -69,8 +70,9 @@ app.post("/screenshot", async (req, res) => {
   }
 });
 
-// 🚀 PORTA CORRETA PARA RAILWAY
+// 🚀 Porta obrigatória para Railway
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Screenshot worker rodando na porta ${PORT}`);
 });
+
