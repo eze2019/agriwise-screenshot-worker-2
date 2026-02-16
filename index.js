@@ -5,18 +5,15 @@ import { createClient } from "@supabase/supabase-js";
 const app = express();
 app.use(express.json());
 
-// 🔗 Inicialização do Supabase com variáveis de ambiente
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// 🔍 Health check para o Railway
 app.get("/health", (req, res) => {
   res.status(200).send("ok");
 });
 
-// 📸 Endpoint para gerar screenshot
 app.post("/screenshot", async (req, res) => {
   const { shareCode } = req.body;
   let browser = null;
@@ -26,10 +23,10 @@ app.post("/screenshot", async (req, res) => {
   }
 
   try {
-    const url = `${process.env.APP_URL}/coleta/${shareCode}`;
+    // ✅ ATUALIZAÇÃO: Agora o Railway usa a rota exclusiva para evitar loops e redirecionamentos
+    const url = `${process.env.APP_URL}/screenshots/${shareCode}`;
     console.log(`Iniciando screenshot para: ${url}`);
 
-    // 🌐 Lançando o browser para ambiente Docker
     browser = await chromium.launch({
       args: [
         "--no-sandbox",
@@ -47,7 +44,7 @@ app.post("/screenshot", async (req, res) => {
       timeout: 30000 
     });
 
-    // ⏳ Espera o sinal do mapa
+    // ⏳ Espera o sinal do mapa definido no PublicCollectionView
     await page.waitForFunction(
       () => window.__MAP_READY__ === true,
       { timeout: 15000 }
@@ -55,10 +52,9 @@ app.post("/screenshot", async (req, res) => {
 
     const screenshot = await page.screenshot({ type: "png" });
 
-    // 📤 Upload para o Bucket configurado no Railway
     const filePath = `thumbnails/${shareCode}.png`;
     const { error: uploadError } = await supabase.storage
-      .from(process.env.SUPABASE_BUCKET) // ✅ CORREÇÃO: Usa 'screenshots-url' do Railway
+      .from(process.env.SUPABASE_BUCKET)
       .upload(filePath, screenshot, {
         contentType: "image/png",
         upsert: true
@@ -66,12 +62,10 @@ app.post("/screenshot", async (req, res) => {
 
     if (uploadError) throw uploadError;
 
-    // 🔗 Pega a URL pública do Bucket correto
     const { data: urlData } = supabase.storage
-      .from(process.env.SUPABASE_BUCKET) // ✅ CORREÇÃO: Usa 'screenshots-url' do Railway
+      .from(process.env.SUPABASE_BUCKET)
       .getPublicUrl(filePath);
 
-    // 💾 Atualiza o banco de dados
     const { error: dbError } = await supabase
       .from("collection_shares")
       .update({ thumbnail_url: urlData.publicUrl })
