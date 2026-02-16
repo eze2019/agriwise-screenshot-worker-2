@@ -1,2 +1,8 @@
+[variables]
+    NIXPACKS_METADATA = 'node'
+
 [phases.setup]
-nixPkgs = ['...', 'playwright-driver']
+    nixPkgs = ['nodePackages.npm', 'playwright-driver']
+
+[phases.build]
+    cmds = ['npm install', 'npx playwright install chromium --with-deps']
