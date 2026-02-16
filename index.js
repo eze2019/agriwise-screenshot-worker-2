@@ -95,10 +95,11 @@ app.post("/screenshot", async (req, res) => {
 });
 
 // 🚀 Configuração de PORTA e HOST (Obrigatório para o deploy não falhar)
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 const HOST = '0.0.0.0'; // Garante que o app aceite conexões externas no container
 
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Screenshot worker rodando em http://${HOST}:${PORT}`);
   console.log(`🔗 APP_URL configurada: ${process.env.APP_URL}`);
 });
+
