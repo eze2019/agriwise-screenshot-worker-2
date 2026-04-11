@@ -49,10 +49,24 @@ async function processQueue() {
 
       console.log("Iniciando screenshot para:", job.url);
 
+      // aguarda carregar tudo
       await page.goto(job.url, {
-        waitUntil: "domcontentloaded",
+        waitUntil: "networkidle",
         timeout: 60000
       });
+
+      // espera render React / mapas
+      await page.waitForTimeout(3000);
+
+      // tenta esperar mapa/canvas se existir
+      try {
+        await page.waitForSelector("canvas", {
+          timeout: 5000
+        });
+      } catch (e) {}
+
+      // espera final
+      await page.waitForTimeout(2000);
 
       const buffer = await page.screenshot({
         fullPage: true
@@ -82,6 +96,23 @@ app.get("/", (req, res) => {
   res.send("Worker screenshot rodando");
 });
 
+// GET direto navegador
+app.get("/screenshot/:shareCode", async (req, res) => {
+  try {
+    const { shareCode } = req.params;
+
+    const url = `https://app.agriwise.com.br/screenshots/${shareCode}`;
+    const image = await enqueue(url);
+
+    res.set("Content-Type", "image/png");
+    res.send(image);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST api
 app.post("/screenshot", async (req, res) => {
   try {
     const { shareCode } = req.body;
@@ -97,8 +128,9 @@ app.post("/screenshot", async (req, res) => {
 
     res.set("Content-Type", "image/png");
     res.send(image);
+
   } catch (error) {
-    console.error("Erro ao gerar screenshot:", error);
+    console.error(error);
 
     res.status(500).json({
       error: "Erro ao gerar screenshot",
