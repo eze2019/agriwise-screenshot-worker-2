@@ -1,6 +1,6 @@
-const express = require("express");
-const cors = require("cors");
-const { chromium } = require("playwright");
+import express from "express";
+import cors from "cors";
+import { chromium } from "playwright";
 
 const app = express();
 
@@ -40,8 +40,8 @@ async function processQueue() {
     const job = queue.shift();
 
     try {
-      const browser = await getBrowser();
-      const context = await browser.newContext({
+      const browserInstance = await getBrowser();
+      const context = await browserInstance.newContext({
         viewport: { width: 1280, height: 720 }
       });
 
@@ -58,11 +58,10 @@ async function processQueue() {
         fullPage: true
       });
 
-      await page.close();
-      await context.close();
+      await page.close().catch(() => {});
+      await context.close().catch(() => {});
 
       job.resolve(buffer);
-
     } catch (error) {
       console.error("Erro no Worker:", error);
       job.reject(error);
@@ -94,14 +93,12 @@ app.post("/screenshot", async (req, res) => {
     }
 
     const url = `https://app.agriwise.com.br/screenshots/${shareCode}`;
-
     const image = await enqueue(url);
 
     res.set("Content-Type", "image/png");
     res.send(image);
-
   } catch (error) {
-    console.error(error);
+    console.error("Erro ao gerar screenshot:", error);
 
     res.status(500).json({
       error: "Erro ao gerar screenshot",
