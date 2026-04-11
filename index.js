@@ -10,41 +10,70 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-app.get("/health", (req, res) => {
-  res.status(200).send("ok");
-});
+let browser = null;
+let processing = false;
+const queue = [];
 
-app.post("/screenshot", async (req, res) => {
-  const { shareCode } = req.body;
-  let browser = null;
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  if (!shareCode) {
-    return res.status(400).json({ error: "shareCode obrigatório" });
-  }
+async function getBrowser() {
+  if (browser) return browser;
+
+  console.log("Iniciando instância única do Chromium...");
+
+  browser = await chromium.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-zygote"
+    ]
+  });
+
+  browser.on("disconnected", () => {
+    console.log("Chromium desconectado. A próxima requisição irá recriá-lo.");
+    browser = null;
+  });
+
+  return browser;
+}
+
+async function closeBrowser() {
+  if (!browser) return;
 
   try {
-    // ✅ ATUALIZAÇÃO: Agora o Railway usa a rota exclusiva para evitar loops e redirecionamentos
-    const url = `${process.env.APP_URL}/screenshots/${shareCode}`;
+    await browser.close();
+  } catch (error) {
+    console.error("Erro ao fechar browser:", error.message);
+  } finally {
+    browser = null;
+  }
+}
+
+async function generateScreenshot(shareCode) {
+  const url = `${process.env.APP_URL}/screenshots/${shareCode}`;
+  const activeBrowser = await getBrowser();
+  const context = await activeBrowser.newContext({
+    viewport: { width: 1200, height: 630 }
+  });
+  const page = await context.newPage();
+
+  try {
     console.log(`Iniciando screenshot para: ${url}`);
 
-    browser = await chromium.launch({
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-      ]
+    await page.goto(url, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000
     });
 
-    const page = await browser.newPage({
-      viewport: { width: 1200, height: 630 }
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {
+      console.log("Aviso: networkidle não foi atingido a tempo.");
     });
 
-    await page.goto(url, { 
-      waitUntil: "networkidle", 
-      timeout: 30000 
-    });
-
-    // ⏳ Espera o sinal do mapa definido no PublicCollectionView
     await page.waitForFunction(
       () => window.__MAP_READY__ === true,
       { timeout: 15000 }
@@ -73,22 +102,101 @@ app.post("/screenshot", async (req, res) => {
 
     if (dbError) throw dbError;
 
-    res.json({ success: true, image: urlData.publicUrl });
+    return { success: true, image: urlData.publicUrl };
+  } finally {
+    await page.close().catch(() => {});
+    await context.close().catch(() => {});
+  }
+}
 
+async function generateScreenshotWithRetry(shareCode, maxRetries = 2) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await generateScreenshot(shareCode);
+    } catch (error) {
+      lastError = error;
+      console.error(`Tentativa ${attempt} falhou para ${shareCode}:`, error.message);
+
+      if (
+        error.message?.includes("Target page, context or browser has been closed") ||
+        error.message?.includes("browserType.launch")
+      ) {
+        await closeBrowser();
+      }
+
+      if (attempt < maxRetries) {
+        await sleep(3000);
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+function enqueueScreenshot(shareCode) {
+  return new Promise((resolve, reject) => {
+    queue.push({ shareCode, resolve, reject });
+    processQueue();
+  });
+}
+
+async function processQueue() {
+  if (processing) return;
+  processing = true;
+
+  while (queue.length > 0) {
+    const job = queue.shift();
+
+    try {
+      const result = await generateScreenshotWithRetry(job.shareCode, 2);
+      job.resolve(result);
+    } catch (error) {
+      job.reject(error);
+    }
+  }
+
+  processing = false;
+}
+
+app.get("/health", (req, res) => {
+  res.status(200).send("ok");
+});
+
+app.post("/screenshot", async (req, res) => {
+  const { shareCode } = req.body;
+
+  if (!shareCode) {
+    return res.status(400).json({ error: "shareCode obrigatório" });
+  }
+
+  try {
+    const result = await enqueueScreenshot(shareCode);
+    return res.json(result);
   } catch (err) {
     console.error("Erro no Worker:", err.message);
-    res.status(500).json({ error: "Erro ao gerar screenshot", details: err.message });
-  } finally {
-    if (browser) {
-      await browser.close();
-    }
+    return res.status(500).json({
+      error: "Erro ao gerar screenshot",
+      details: err.message
+    });
   }
 });
 
 const PORT = process.env.PORT || 8080;
-const HOST = '0.0.0.0';
+const HOST = "0.0.0.0";
 
 app.listen(PORT, HOST, () => {
   console.log(`🚀 Worker rodando em http://${HOST}:${PORT}`);
   console.log(`🪣 Bucket configurado: ${process.env.SUPABASE_BUCKET}`);
 });
+
+async function shutdown() {
+  console.log("Encerrando worker...");
+  await closeBrowser();
+  process.exit(0);
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
